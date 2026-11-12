@@ -25,6 +25,10 @@ const nodeRequire = createRequire(import.meta.url);
 const APP_ROOT = path.join(electronWindowsDir, "..");
 const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
 const RENDERER_DIST = path.join(APP_ROOT, "dist");
+// Smoke export without UI (scripts/headless-export.mjs): the editor renders and exports
+// in a window that is never shown.
+const IS_HEADLESS_EXPORT =
+	process.env.RECORDLY_SMOKE_EXPORT === "1" && process.env.RECORDLY_HEADLESS === "1";
 const WINDOW_ICON_FILENAME =
 	process.platform === "darwin" ? "recordlymac-512.png" : "recordly-512.png";
 const WINDOW_ICON_PATH = path.join(
@@ -985,9 +989,10 @@ export function createEditorWindow(): BrowserWindow {
 		transparent: false,
 		resizable: true,
 		alwaysOnTop: false,
-		skipTaskbar: false,
+		skipTaskbar: IS_HEADLESS_EXPORT,
 		title: "Recordly",
 		show: false,
+		paintWhenInitiallyHidden: true,
 		backgroundColor: "#000000",
 		webPreferences: {
 			preload: path.join(electronWindowsDir, "preload.mjs"),
@@ -1019,14 +1024,14 @@ export function createEditorWindow(): BrowserWindow {
 
 	win.once("ready-to-show", () => {
 		console.log(`[PERF:MAIN] Editor Window: ready-to-show in ${Date.now() - perfStart}ms`);
-		win.show();
+		if (!IS_HEADLESS_EXPORT) win.show();
 	});
 
 	win.webContents.on("did-finish-load", () => {
 		console.log(`[PERF:MAIN] Editor Window: did-finish-load in ${Date.now() - perfStart}ms`);
 		win?.webContents.send("main-process-message", new Date().toLocaleString());
 		// Fallback for Linux/Wayland where `ready-to-show` may not fire reliably.
-		if (!win.isDestroyed() && !win.isVisible()) {
+		if (!IS_HEADLESS_EXPORT && !win.isDestroyed() && !win.isVisible()) {
 			console.log("[editor-window] forcing show after did-finish-load");
 			win.show();
 		}

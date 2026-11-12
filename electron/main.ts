@@ -65,6 +65,8 @@ import {
 
 const electronMainDir = path.dirname(fileURLToPath(import.meta.url));
 const IS_SMOKE_EXPORT = process.env.RECORDLY_SMOKE_EXPORT === "1";
+// The editor never becomes visible; see createEditorWindow().
+const IS_HEADLESS_EXPORT = IS_SMOKE_EXPORT && process.env.RECORDLY_HEADLESS === "1";
 
 function ignoreBrokenConsolePipe(stream: NodeJS.WritableStream | undefined) {
 	stream?.on("error", (error: NodeJS.ErrnoException) => {
@@ -98,8 +100,17 @@ function configureGpuAccelerationSwitches() {
 	if (useGl) {
 		app.commandLine.appendSwitch("use-gl", useGl);
 	}
-	if (disableFeatures && disableFeatures.length > 0) {
-		app.commandLine.appendSwitch("disable-features", disableFeatures.join(","));
+	const disabledFeatures = [...(disableFeatures ?? [])];
+	if (IS_HEADLESS_EXPORT) {
+		// A hidden editor must keep rendering and decoding at full speed: no occlusion
+		// tracking or renderer backgrounding for a window nobody looks at.
+		disabledFeatures.push("CalculateNativeWinOcclusion");
+		app.commandLine.appendSwitch("disable-renderer-backgrounding");
+		app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
+		app.commandLine.appendSwitch("disable-background-timer-throttling");
+	}
+	if (disabledFeatures.length > 0) {
+		app.commandLine.appendSwitch("disable-features", disabledFeatures.join(","));
 	}
 }
 
@@ -184,7 +195,9 @@ let isForceClosing = false;
 let isAppQuitting = false;
 let isCreatingMainWindow = false;
 let isCreatingEditorWindow = false;
-const shouldEnforceSingleInstanceLock = !IS_DEV;
+// Smoke exports are short-lived automation runs: they must neither quit nor wake up a
+// Recordly instance the user already has open.
+const shouldEnforceSingleInstanceLock = !IS_DEV && !IS_SMOKE_EXPORT;
 const hasSingleInstanceLock = shouldEnforceSingleInstanceLock
 	? app.requestSingleInstanceLock()
 	: true;
@@ -850,6 +863,11 @@ function createEditorWindowWrapper() {
 	});
 	editorWindow.once("closed", closeSave.dispose);
 	editorWindow.on("close", (event) => {
+		// A smoke export closes its editor when it is done; let that end the app instead of
+		// prompting to save or falling back to the HUD on Windows.
+		if (IS_SMOKE_EXPORT) {
+			return;
+		}
 		if (isForceClosing || !editorHasUnsavedChanges) {
 			if (process.platform === "win32" && !isForceClosing && !isAppQuitting) {
 				event.preventDefault();
